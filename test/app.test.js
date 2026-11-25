@@ -138,8 +138,13 @@ test("AI chooses an allowed move, saves its comment and falls back for an invali
     async request(url, options) {
       calls++;
       const body = JSON.parse(options.body);
-      assert.equal(url,"https://openrouter.ai/api/v1/chat/completions");
-      assert.equal(body.model,"openrouter/free");
+      assert.equal(url,"https://api.groq.com/openai/v1/chat/completions");
+      assert.equal(options.headers.Authorization,"Bearer test-key");
+      assert.equal(body.model,"openai/gpt-oss-20b");
+      assert.equal(body.reasoning_effort,"low");
+      assert.equal(body.response_format.type,"json_schema");
+      assert.equal(body.response_format.json_schema.strict,true);
+      assert.deepEqual(body.response_format.json_schema.schema.required,["move","comment"]);
       const sent = JSON.parse(body.messages[1].content);
       assert.deepEqual(Object.keys(sent),["side","rows","lastMove","legalMoves"]);
       assert.equal(sent.rows.length,8);

@@ -223,7 +223,7 @@ if (require.main === module) {
   const port = Number(env.PORT || 3000);
   const data = env.DATA_DIR || join(__dirname,"data");
   mkdirSync(data,{recursive:true});
-  const aiPlayer = createAiPlayer(env.OPENROUTER_API_KEY);
+  const aiPlayer = createAiPlayer(env.GROQ_API_KEY);
   const server = createApp({token,databasePath:join(data,"shashki.sqlite"),aiPlayer});
   server.listen(port,"0.0.0.0",()=>{
     console.log("Шашки.App запущены, порт " + port);
