@@ -10,6 +10,7 @@ const {verifier} = require("./lib/auth");
 const {available, viewPosition, complete, jump} = require("./lib/game");
 const {legalMoves} = require("./lib/engine");
 const {AI_LEVEL, createAiPlayer} = require("./lib/ai-player");
+const {createPlayStats, recordPlay, summarizeGame} = require("./lib/game-summary");
 const {appUrl, runTelegram} = require("./lib/telegram");
 
 const AI_HISTORY_LIMIT = 8;
@@ -18,7 +19,10 @@ const AI_FALLBACK_COMMENT = "Я не получил подходящий отв�
 function rememberAiTurn(game, comment = null) {
   if (game.level !== AI_LEVEL) return;
   if (comment) game.comment = comment;
-  game.aiHistory = [...(game.aiHistory ?? []),{...game.last,side:-game.turn,comment}].slice(-AI_HISTORY_LIMIT);
+  const turn = {...game.last,side:-game.turn,comment};
+  game.aiPlayStats ??= createPlayStats(game.aiHistory);
+  recordPlay(game.aiPlayStats,turn);
+  game.aiHistory = [...(game.aiHistory ?? []),turn].slice(-AI_HISTORY_LIMIT);
 }
 
 const staticContent = new Map([
@@ -144,11 +148,12 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
     const game = row.game;
     const ai = row.mode === "bot" && game.level === AI_LEVEL;
     const opponent = foe ? store.profile(foe) : {name:ai ? "ИИ" : "Бот",photo:null};
+    const comment = ai ? (game.result ? summarizeGame(game,side) : game.comment ?? null) : null;
     return {
       id:row.id, mode:row.mode, version:row.rev, side, turn:game.turn, opponent,
       ...viewPosition(game), chain:game.chain?.at(-1) ?? null, last:game.last,
       available:!game.result && game.turn === side ? available(game) : [],
-      result:game.result, ai, comment:ai ? game.comment ?? null : null
+      result:game.result, ai, comment
     };
   }
 

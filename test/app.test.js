@@ -11,6 +11,7 @@ const {createApp} = require("../index");
 const {initialPosition, WHITE, positionKey, drawState, legalMoves, nameOf, played} = require("../lib/engine");
 const {jump, viewPosition, available} = require("../lib/game");
 const {AI_LEVEL, createAiPlayer} = require("../lib/ai-player");
+const {createPlayStats, recordPlay, summarizeGame} = require("../lib/game-summary");
 
 const token = "synthetic-token-for-local-testing";
 const date = 1_800_000_000_000;
@@ -127,6 +128,7 @@ test("an intermediate capture can be resumed with the same piece and crowns imme
   assert.equal(jump(game,3,30),true);
   assert.equal(game.result.side,1);
   assert.equal(game.board.filter(Boolean).length,1);
+  assert.equal(game.last.crowned,true);
 });
 
 test("AI chooses an allowed move, saves its comment and falls back for an invalid choice",async t => {
@@ -209,7 +211,7 @@ test("resigning aborts an unfinished AI request without writing a late move",asy
   finishRequest();
   const final = (await app.request(6,"GET","state")).data.game;
   assert.equal(final.version,1);
-  assert.equal(final.comment,null);
+  assert.equal(final.comment,"Мы сыграли слишком мало ходов, чтобы сравнить стили. Спасибо за партию!");
   assert.deepEqual(final.board,initialPosition());
 });
 
@@ -314,4 +316,31 @@ test("AI remembers its own moves and comments across restarts and speaks as a pl
     {player:"соперник",move:[reply.from,reply.to].map(nameOf).join("-")}
   ]);
   assert.match(second.comment,/^Я (?:хожу|выбираю взятие) /);
+
+  const finished = await app.request(7,"POST","resign",{id:second.id});
+  assert.equal(finished.status,200);
+  assert.match(finished.data.game.comment,/Спасибо за партию!$/);
+  assert.notEqual(finished.data.game.comment,second.comment);
+  assert.equal((await app.request(7,"GET","state")).data.game.comment,finished.data.game.comment);
+});
+
+test("AI game summary uses the whole game and describes both sides from its own perspective",() => {
+  const stats = createPlayStats();
+  recordPlay(stats,{side:WHITE,path:[40,26],captured:[33]});
+  recordPlay(stats,{side:-WHITE,path:[10,24],captured:[17]});
+  for (let i = 0; i < 5; i++) {
+    recordPlay(stats,{side:WHITE,path:[42,35],captured:[]});
+    recordPlay(stats,{side:-WHITE,path:[17,24],captured:[]});
+  }
+  const game = {aiPlayStats:stats,aiHistory:[]};
+  assert.equal(summarizeGame(game,WHITE),
+    "Ты часто ходил в центр и взял 1 шашку, а я чаще ходил по краю и взял 1 шашку. Спасибо за партию!");
+  assert.equal(summarizeGame(game,-WHITE),
+    "Ты чаще ходил по краю и взял 1 шашку, а я часто ходил в центр и взял 1 шашку. Спасибо за партию!");
+  const legacy = {aiHistory:[
+    {side:WHITE,path:[17,3,30],captured:[10,21],crowned:true},
+    {side:-WHITE,path:[16,25],captured:[]}
+  ]};
+  assert.equal(summarizeGame(legacy,WHITE),
+    "По записанным ходам ты вывел шашку в дамки, а я играл без взятий. Спасибо за партию!");
 });
