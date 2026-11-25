@@ -1,0 +1,12 @@
+{
+  "name": "shashki-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram Mini App для игры в русские шашки",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22.13.0" }
+}
