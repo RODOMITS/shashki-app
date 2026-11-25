@@ -8,7 +8,7 @@ const {tmpdir} = require("node:os");
 const {join} = require("node:path");
 const {setTimeout:wait} = require("node:timers/promises");
 const {createApp} = require("../index");
-const {initialPosition, WHITE, positionKey, drawState, legalMoves, played} = require("../lib/engine");
+const {initialPosition, WHITE, positionKey, drawState, legalMoves, nameOf, played} = require("../lib/engine");
 const {jump, viewPosition, available} = require("../lib/game");
 const {AI_LEVEL, createAiPlayer} = require("../lib/ai-player");
 
@@ -132,7 +132,7 @@ test("an intermediate capture can be resumed with the same piece and crowns imme
 test("AI chooses an allowed move, saves its comment and falls back for an invalid choice",async t => {
   const position = initialPosition();
   const choices = legalMoves(position,WHITE);
-  const comment = "Занимаю центр, чтобы оставить больше вариантов для следующего хода.";
+  const comment = "Я занимаю центр, чтобы оставить больше вариантов для следующего хода.";
   let calls = 0;
   const ai = createAiPlayer("test-key",{
     async request(url, options) {
@@ -146,9 +146,10 @@ test("AI chooses an allowed move, saves its comment and falls back for an invali
       assert.equal(body.response_format.json_schema.strict,true);
       assert.deepEqual(body.response_format.json_schema.schema.required,["move","comment"]);
       const sent = JSON.parse(body.messages[1].content);
-      assert.deepEqual(Object.keys(sent),["side","rows","lastMove","legalMoves"]);
+      assert.deepEqual(Object.keys(sent),["side","rows","lastMove","history","legalMoves"]);
       assert.equal(sent.rows.length,8);
       assert.equal(sent.legalMoves.length,choices.length);
+      assert.deepEqual(sent.history,[]);
       assert.equal(sent.side,"белые");
       assert.equal(sent.lastMove,null);
       return Response.json({choices:[{message:{content:JSON.stringify({
@@ -181,7 +182,7 @@ test("AI chooses an allowed move, saves its comment and falls back for an invali
 
   const fallback = await waitForWhiteMove(5);
   assert.ok(choices.some(move => JSON.stringify(move.path) === JSON.stringify(fallback.last.path)));
-  assert.match(fallback.comment,/недоступен/);
+  assert.match(fallback.comment,/^Я .*запасным движком/);
   assert.equal(calls,2);
 });
 
@@ -206,4 +207,69 @@ test("resigning aborts an unfinished AI request without writing a late move",asy
   assert.equal(final.version,1);
   assert.equal(final.comment,null);
   assert.deepEqual(final.board,initialPosition());
+});
+
+test("AI receives tactical facts about allowed moves",async () => {
+  const board = Array(64).fill(0);
+  board[44] = 1;
+  board[26] = -1;
+  const moves = legalMoves(board,WHITE);
+  let sent;
+  const ai = createAiPlayer("test-key",{
+    async request(_url,{body}) {
+      sent = JSON.parse(JSON.parse(body).messages[1].content);
+      return Response.json({choices:[{message:{content:'{"move":2,"comment":"Я не подставляю шашку."}'}}]});
+    }
+  });
+  const decision = await ai({board,side:WHITE,moves});
+  assert.deepEqual(sent.legalMoves.find(move => move.notation === "e3-d4"),{
+    number:1,notation:"e3-d4",takes:0,crowns:false,replyTakes:1,replyCanTakeMe:true,wins:false
+  });
+  assert.deepEqual(sent.legalMoves.find(move => move.notation === "e3-f4"),{
+    number:2,notation:"e3-f4",takes:0,crowns:false,replyTakes:0,replyCanTakeMe:false,wins:false
+  });
+  assert.equal(decision.move,moves[1]);
+});
+
+test("AI remembers its own moves and comments across restarts and speaks as a player",async t => {
+  const folder = await mkdtemp(join(tmpdir(),"shashki-ai-"));
+  const database = join(folder,"ai.sqlite");
+  const comment = "Я начинаю с хода на край.";
+  const sent = [];
+  const ai = createAiPlayer("test-key",{
+    async request(_url,{body}) {
+      sent.push(JSON.parse(JSON.parse(body).messages[1].content));
+      const phrase = sent.length === 1 ? comment : "Белые сделали очередной ход.";
+      return Response.json({choices:[{message:{content:JSON.stringify({move:1,comment:phrase})}}]});
+    }
+  });
+  let app = await start(database,ai);
+  t.after(async() => {
+    await app.close();
+    await rm(folder,{recursive:true,force:true});
+  });
+  async function waitForVersion(version) {
+    for (let i = 0; i < 50; i++) {
+      const {data} = await app.request(7,"GET","state");
+      if (data.game?.version >= version) return data.game;
+      await wait(20);
+    }
+    assert.fail("Game never reached version " + version);
+  }
+  await app.request(7,"POST","bot",{side:-1,level:AI_LEVEL});
+  const first = await waitForVersion(1);
+  assert.equal(first.comment,comment);
+  await app.close();
+  app = await start(database,ai);
+
+  const [reply] = first.available;
+  const human = await app.request(7,"POST","move",{id:first.id,version:first.version,from:reply.from,to:reply.to});
+  assert.equal(human.status,200);
+  const second = await waitForVersion(3);
+  assert.equal(sent.length,2);
+  assert.deepEqual(sent[1].history,[
+    {player:"я",move:first.last.path.map(nameOf).join("-"),comment},
+    {player:"соперник",move:[reply.from,reply.to].map(nameOf).join("-")}
+  ]);
+  assert.match(second.comment,/^Я (?:хожу|выбираю взятие) /);
 });

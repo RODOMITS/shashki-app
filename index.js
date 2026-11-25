@@ -12,6 +12,14 @@ const {legalMoves} = require("./lib/engine");
 const {AI_LEVEL, createAiPlayer} = require("./lib/ai-player");
 const {appUrl, runTelegram} = require("./lib/telegram");
 
+const AI_HISTORY_LIMIT = 8;
+
+function rememberAiTurn(game, comment = null) {
+  if (game.level !== AI_LEVEL) return;
+  if (comment) game.comment = comment;
+  game.aiHistory = [...(game.aiHistory ?? []),{...game.last,side:-game.turn,comment}].slice(-AI_HISTORY_LIMIT);
+}
+
 const staticContent = new Map([
   ["/", ["index.html","text/html; charset=utf-8"]],
   ["/style.css", ["style.css","text/css; charset=utf-8"]],
@@ -64,7 +72,7 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
     const choice = move || legalMoves(row.game.board,row.game.turn)[0];
     if (!choice) return;
     complete(row.game,choice);
-    if (comment) row.game.comment = comment;
+    rememberAiTurn(row.game,comment);
     store.save(row,now());
   }
 
@@ -106,7 +114,7 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
       return;
     }
     function fallback() {
-      job.comment = "ИИ сейчас недоступен. Этот ход сделан обычным ботом.";
+      job.comment = "Я не получил ответ от модели. Делаю ход запасным движком.";
       queueLocalBot(row,job,2);
     }
     if (!aiPlayer) {
@@ -115,7 +123,10 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
     }
     const moves = legalMoves(board,botSide);
     job.controller = new AbortController();
-    aiPlayer({board, side:botSide, last, moves, signal:job.controller.signal})
+    aiPlayer({
+      board, side:botSide, last, moves, history:row.game.aiHistory,
+      previousComment:row.game.comment, signal:job.controller.signal
+    })
       .then(decision => {
         if (moves.includes(decision?.move)) finishBotMove(row.id,job,decision.move,decision.comment);
         else fallback();
@@ -166,6 +177,7 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
       if (!Number.isInteger(body.from) || !Number.isInteger(body.to) || !jump(row.game,body.from,body.to)) {
         throw fail(422,"Такой ход недоступен.");
       }
+      if (!row.game.chain) rememberAiTurn(row.game);
       if (!store.save(row,now())) throw fail(409,"Позиция обновилась. Проверь доску и повтори ход.");
       return state(user,store.get(row.id));
     },

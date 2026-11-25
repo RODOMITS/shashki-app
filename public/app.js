@@ -151,7 +151,7 @@ function renderGame(previous) {
   avatar($("own-avatar"),state.profile);
   avatar($("opponent-avatar"),game.opponent);
   const bubble = $("ai-comment");
-  const opening = game.turn === game.side ? "Твой ход. Посмотрим, как начнём." : "Оцениваю позицию…";
+  const opening = game.turn === game.side ? "Жду твой первый ход." : "Оцениваю позицию…";
   const comment = game.ai ? game.comment || (game.result ? "" : opening) : "";
   $("game").classList.toggle("with-ai",game.ai);
   bubble.hidden = !comment;
