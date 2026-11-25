@@ -3,7 +3,7 @@
   font-family:Inter, "Segoe UI",system-ui,sans-serif;
   --bg:#262626; --panel:#303030; --raised:#393939; --stroke:#515151;
   --text:#f2f2f2; --sub:#bfbfbf;
-  --accent:#86a85d; --ink:#181818; --board-light:#e6dfc8; --board-dark:#537e77;
+  --accent:#86a85d; --ink:#181818; --board-light:#e6dfc8; --board-dark:#617c42;
   --page-height:var(--tg-viewport-stable-height,100dvh);
 }
 * { box-sizing:border-box; }
@@ -76,15 +76,15 @@ h1 span { color:var(--accent); }
 .cell.last { background:#72926f; }
 .cell.selected { background:#a7b87a; }
 .cell.playable, .cell.target { cursor:pointer; }
-.cell.target::after { content:""; position:absolute; width:23%; aspect-ratio:1; border-radius:50%; border:1px solid #cdebb971; background:#182e299f; pointer-events:none; }
-.cell.jump::after { width:54%; background:#1b33264a; border:2px solid #d8ecc9; }
+.cell.target::after { content:""; position:absolute; width:23%; aspect-ratio:1; border-radius:50%; border:1px solid #cdebb971; background:#292f219f; pointer-events:none; }
+.cell.jump::after { width:54%; background:#2b36224a; border:2px solid #d8ecc9; }
 .cell.must:not(.selected)::before { content:""; position:absolute; inset:9%; border:2px solid #e6efae; border-radius:50%; z-index:1; pointer-events:none; }
 .chip { position:relative; display:grid; place-items:center; width:73%; aspect-ratio:1; border-radius:50%; pointer-events:none; z-index:1; border:1px solid var(--rim); background:var(--top); box-shadow:0 3px 0 var(--base); }
 .chip::before, .chip::after { content:""; position:absolute; border:1px solid var(--ring); border-radius:50%; }
 .chip::before { inset:12%; }
 .chip::after { inset:21%; background:var(--face); }
 .chip.white { --top:#f0e2bd; --face:#f8edcf; --rim:#fff1cd; --ring:#b2a382; --base:#a39370; color:#765b33; }
-.chip.black { --top:#344b53; --face:#253940; --rim:#597178; --ring:#67848a; --base:#19272e; color:#f0d78c; }
+.chip.black { --top:#3b3b3b; --face:#2e2e2e; --rim:#606060; --ring:#777; --base:#1c1c1c; color:#f0d78c; }
 .chip.king svg { position:relative; z-index:1; width:47%; height:47%; }
 .chip.taken { opacity:.38; }
 .chip.ghost { position:absolute; z-index:3; }
