@@ -146,9 +146,11 @@ test("AI chooses an allowed move, saves its comment and falls back for an invali
       assert.equal(body.response_format.json_schema.strict,true);
       assert.deepEqual(body.response_format.json_schema.schema.required,["move","comment"]);
       const sent = JSON.parse(body.messages[1].content);
-      assert.deepEqual(Object.keys(sent),["side","rows","lastMove","history","legalMoves"]);
+      assert.deepEqual(Object.keys(sent),["side","rows","lastMove","history","legalMoves","allowedMoves","engineRecommendation"]);
       assert.equal(sent.rows.length,8);
       assert.equal(sent.legalMoves.length,choices.length);
+      assert.ok(sent.allowedMoves.includes(sent.engineRecommendation));
+      assert.deepEqual(body.response_format.json_schema.schema.properties.move.enum,sent.allowedMoves);
       assert.deepEqual(sent.history,[]);
       assert.equal(sent.side,"белые");
       assert.equal(sent.lastMove,null);
@@ -198,6 +200,8 @@ test("resigning aborts an unfinished AI request without writing a late move",asy
   const app = await start(":memory:",ai);
   t.after(() => app.close());
   const initial = await app.request(6,"POST","bot",{side:-1,level:AI_LEVEL});
+  for (let i = 0; i < 100 && !receivedSignal; i++) await wait(20);
+  assert.ok(receivedSignal);
   assert.equal(receivedSignal.aborted,false);
   const {data} = await app.request(6,"POST","resign",{id:initial.data.game.id});
   assert.equal(receivedSignal.aborted,true);
@@ -215,20 +219,58 @@ test("AI receives tactical facts about allowed moves",async () => {
   board[26] = -1;
   const moves = legalMoves(board,WHITE);
   let sent;
+  let choice = 2;
   const ai = createAiPlayer("test-key",{
     async request(_url,{body}) {
       sent = JSON.parse(JSON.parse(body).messages[1].content);
-      return Response.json({choices:[{message:{content:'{"move":2,"comment":"Я не подставляю шашку."}'}}]});
+      return Response.json({choices:[{message:{content:JSON.stringify({move:choice,comment:"Я не подставляю шашку."})}}]});
     }
   });
   const decision = await ai({board,side:WHITE,moves});
   assert.deepEqual(sent.legalMoves.find(move => move.notation === "e3-d4"),{
-    number:1,notation:"e3-d4",takes:0,crowns:false,replyTakes:1,replyCanTakeMe:true,wins:false
+    number:1,notation:"e3-d4",takes:0,takesKings:0,crowns:false,replyTakes:1,replyCanTakeMe:true,losesAllOnReply:true,wins:false
   });
   assert.deepEqual(sent.legalMoves.find(move => move.notation === "e3-f4"),{
-    number:2,notation:"e3-f4",takes:0,crowns:false,replyTakes:0,replyCanTakeMe:false,wins:false
+    number:2,notation:"e3-f4",takes:0,takesKings:0,crowns:false,replyTakes:0,replyCanTakeMe:false,losesAllOnReply:false,wins:false
   });
+  assert.deepEqual(sent.allowedMoves,[2]);
   assert.equal(decision.move,moves[1]);
+  choice = 1;
+  assert.equal(await ai({board,side:WHITE,moves}),null);
+});
+
+test("AI prioritizes proven wins and a fallback comment names the actual move",async () => {
+  const board = Array(64).fill(0);
+  board[49] = 2;
+  board[42] = -1;
+  board[26] = -1;
+  const moves = legalMoves(board,WHITE);
+  let sent;
+  const ai = createAiPlayer("test-key",{
+    async request(_url,{body}) {
+      sent = JSON.parse(JSON.parse(body).messages[1].content);
+      return Response.json({choices:[{message:{content:JSON.stringify({
+        move:sent.allowedMoves[0],comment:"Я хожу h2-g3."
+      })}}]});
+    }
+  });
+  const decision = await ai({board,side:WHITE,moves});
+  assert.ok(sent.legalMoves.some(candidate => !candidate.wins));
+  assert.ok(sent.allowedMoves.length > 0);
+  assert.ok(sent.allowedMoves.every(number => sent.legalMoves[number - 1].wins));
+  assert.equal(decision.move,moves[sent.allowedMoves[0] - 1]);
+  assert.equal(decision.comment,"Я завершаю партию ходом " + sent.legalMoves[sent.allowedMoves[0] - 1].notation + ".");
+
+  const promotion = Array(64).fill(0);
+  promotion[17] = 1;
+  promotion[10] = -1;
+  promotion[21] = -2;
+  const crowned = await ai({board:promotion,side:WHITE,moves:legalMoves(promotion,WHITE)});
+  const candidate = sent.legalMoves[sent.allowedMoves[0] - 1];
+  assert.equal(candidate.crowns,true);
+  assert.equal(candidate.takes,2);
+  assert.equal(candidate.takesKings,1);
+  assert.equal(crowned.move.piece,2);
 });
 
 test("AI remembers its own moves and comments across restarts and speaks as a player",async t => {

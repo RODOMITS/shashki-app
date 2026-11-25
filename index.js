@@ -13,6 +13,7 @@ const {AI_LEVEL, createAiPlayer} = require("./lib/ai-player");
 const {appUrl, runTelegram} = require("./lib/telegram");
 
 const AI_HISTORY_LIMIT = 8;
+const AI_FALLBACK_COMMENT = "Я не получил подходящий ответ от модели. Делаю ход запасным движком.";
 
 function rememberAiTurn(game, comment = null) {
   if (game.level !== AI_LEVEL) return;
@@ -76,13 +77,35 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
     store.save(row,now());
   }
 
+  function requestAiTurn(id, job, engineHint) {
+    const row = store.get(id);
+    if (!row || row.rev !== job.rev || row.game.result) {
+      jobs.delete(id);
+      return;
+    }
+    const {board, turn, last, aiHistory, comment} = row.game;
+    const moves = legalMoves(board,turn);
+    job.controller = new AbortController();
+    const fallback = () => finishBotMove(id,job,engineHint,AI_FALLBACK_COMMENT);
+    aiPlayer({
+      board, side:turn, last, moves, engineHint, history:aiHistory,
+      previousComment:comment, signal:job.controller.signal
+    }).then(decision => {
+      if (moves.includes(decision?.move)) finishBotMove(id,job,decision.move,decision.comment);
+      else fallback();
+    },fallback);
+  }
+
   function currentWorker() {
     if (worker) return worker;
     const instance = new Worker(join(__dirname,"lib","bot-worker.js"));
     worker = instance;
     instance.on("message", ({id,move}) => {
       const job = jobs.get(id);
-      if (job?.worker === instance) finishBotMove(id,job,move,job.comment);
+      if (job?.worker !== instance) return;
+      job.worker = null;
+      if (job.useModel) requestAiTurn(id,job,move);
+      else finishBotMove(id,job,move,job.comment);
     });
     instance.on("error", () => console.warn("Вычисление хода бота прервалось."));
     instance.on("exit", () => {
@@ -106,31 +129,12 @@ function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
     if (!row || row.mode !== "bot" || row.game.result || jobs.has(row.id)) return;
     const botSide = row.white === 0 ? 1 : -1;
     if (row.game.turn !== botSide) return;
-    const {board, level, last} = row.game;
-    const job = {rev:row.rev};
+    const {level} = row.game;
+    const useModel = level === AI_LEVEL && Boolean(aiPlayer);
+    const comment = level === AI_LEVEL && !useModel ? AI_FALLBACK_COMMENT : null;
+    const job = {rev:row.rev,useModel,comment};
     jobs.set(row.id,job);
-    if (level !== AI_LEVEL) {
-      queueLocalBot(row,job,level);
-      return;
-    }
-    function fallback() {
-      job.comment = "Я не получил ответ от модели. Делаю ход запасным движком.";
-      queueLocalBot(row,job,2);
-    }
-    if (!aiPlayer) {
-      fallback();
-      return;
-    }
-    const moves = legalMoves(board,botSide);
-    job.controller = new AbortController();
-    aiPlayer({
-      board, side:botSide, last, moves, history:row.game.aiHistory,
-      previousComment:row.game.comment, signal:job.controller.signal
-    })
-      .then(decision => {
-        if (moves.includes(decision?.move)) finishBotMove(row.id,job,decision.move,decision.comment);
-        else fallback();
-      },fallback);
+    queueLocalBot(row,job,level === AI_LEVEL ? 2 : level);
   }
 
   function view(row, id) {
