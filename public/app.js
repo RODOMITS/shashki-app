@@ -21,9 +21,10 @@ function telegram(method, ...args) {
   try { tg?.[method]?.(...args); } catch {}
 }
 
-telegram("setHeaderColor","#11151e");
-telegram("setBackgroundColor","#11151e");
-telegram("setBottomBarColor","#11151e");
+const appBackground = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+telegram("setHeaderColor",appBackground);
+telegram("setBackgroundColor",appBackground);
+telegram("setBottomBarColor",appBackground);
 telegram("ready");
 telegram("expand");
 tg?.BackButton?.onClick(() => showGame(false));
