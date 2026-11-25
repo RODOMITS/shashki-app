@@ -8,8 +8,9 @@ const {tmpdir} = require("node:os");
 const {join} = require("node:path");
 const {setTimeout:wait} = require("node:timers/promises");
 const {createApp} = require("../index");
-const {initialPosition, WHITE, positionKey, drawState} = require("../lib/engine");
+const {initialPosition, WHITE, positionKey, drawState, legalMoves, played} = require("../lib/engine");
 const {jump, viewPosition, available} = require("../lib/game");
+const {AI_LEVEL, createAiPlayer} = require("../lib/ai-player");
 
 const token = "synthetic-token-for-local-testing";
 const date = 1_800_000_000_000;
@@ -25,8 +26,8 @@ function sign(id, authDate = date) {
   return params.toString();
 }
 
-async function start(databasePath) {
-  const server = createApp({token,databasePath,now:() => date});
+async function start(databasePath, aiPlayer) {
+  const server = createApp({token,databasePath,now:() => date,aiPlayer});
   await new Promise(resolve => server.listen(0,"127.0.0.1",resolve));
   const base = "http://127.0.0.1:" + server.address().port;
   return {
@@ -56,6 +57,8 @@ test("Telegram auth, simultaneous matchmaking, move validation, persistent stati
   assert.match(await home.text(),/<title>Шашки\.App<\/title>/);
   assert.equal((await fetch(app.base+"/style.css")).status,200);
   assert.equal((await request(1,"GET","state",undefined,"")).status,401);
+  assert.equal((await request(1,"GET","state")).data.aiAvailable,false);
+  assert.equal((await request(1,"POST","bot",{side:1,level:AI_LEVEL})).status,503);
   assert.equal((await request(1,"GET","state",undefined,sign(1,date-86_401_000))).status,401);
   const tampered = new URLSearchParams(sign(1));
   tampered.set("user",JSON.stringify({id:2,first_name:"Подмена"}));
@@ -124,4 +127,78 @@ test("an intermediate capture can be resumed with the same piece and crowns imme
   assert.equal(jump(game,3,30),true);
   assert.equal(game.result.side,1);
   assert.equal(game.board.filter(Boolean).length,1);
+});
+
+test("AI chooses an allowed move, saves its comment and falls back for an invalid choice",async t => {
+  const position = initialPosition();
+  const choices = legalMoves(position,WHITE);
+  const comment = "Занимаю центр, чтобы оставить больше вариантов для следующего хода.";
+  let calls = 0;
+  const ai = createAiPlayer("test-key",{
+    async request(url, options) {
+      calls++;
+      const body = JSON.parse(options.body);
+      assert.equal(url,"https://openrouter.ai/api/v1/chat/completions");
+      assert.equal(body.model,"openrouter/free");
+      const sent = JSON.parse(body.messages[1].content);
+      assert.deepEqual(Object.keys(sent),["side","rows","lastMove","legalMoves"]);
+      assert.equal(sent.rows.length,8);
+      assert.equal(sent.legalMoves.length,choices.length);
+      assert.equal(sent.side,"белые");
+      assert.equal(sent.lastMove,null);
+      return Response.json({choices:[{message:{content:JSON.stringify({
+        move:calls === 1 ? 2 : 999,comment
+      })}}]});
+    }
+  });
+  const app = await start(":memory:",ai);
+  t.after(() => app.close());
+
+  async function waitForWhiteMove(id) {
+    const reply = await app.request(id,"POST","bot",{side:-1,level:AI_LEVEL});
+    assert.equal(reply.status,200);
+    assert.equal(reply.data.aiAvailable,true);
+    assert.equal(reply.data.game.ai,true);
+    assert.equal(reply.data.game.opponent.name,"ИИ");
+    for (let i = 0; i < 50; i++) {
+      const {data} = await app.request(id,"GET","state");
+      if (data.game.version > 0) return data.game;
+      await wait(20);
+    }
+    assert.fail("Bot did not answer");
+  }
+
+  const game = await waitForWhiteMove(4);
+  assert.deepEqual(game.board,played(position,choices[1]));
+  assert.equal(game.comment,comment);
+  assert.equal(game.turn,-1);
+  assert.equal((await app.request(4,"GET","state")).data.game.comment,comment);
+
+  const fallback = await waitForWhiteMove(5);
+  assert.ok(choices.some(move => JSON.stringify(move.path) === JSON.stringify(fallback.last.path)));
+  assert.match(fallback.comment,/недоступен/);
+  assert.equal(calls,2);
+});
+
+test("resigning aborts an unfinished AI request without writing a late move",async t => {
+  let receivedSignal;
+  let finishRequest;
+  const ai = ({moves,signal}) => {
+    receivedSignal = signal;
+    return new Promise(resolve => {
+      finishRequest = () => resolve({move:moves[0],comment:"Запоздавший ход."});
+    });
+  };
+  const app = await start(":memory:",ai);
+  t.after(() => app.close());
+  const initial = await app.request(6,"POST","bot",{side:-1,level:AI_LEVEL});
+  assert.equal(receivedSignal.aborted,false);
+  const {data} = await app.request(6,"POST","resign",{id:initial.data.game.id});
+  assert.equal(receivedSignal.aborted,true);
+  assert.equal(data.game.version,1);
+  finishRequest();
+  const final = (await app.request(6,"GET","state")).data.game;
+  assert.equal(final.version,1);
+  assert.equal(final.comment,null);
+  assert.deepEqual(final.board,initialPosition());
 });

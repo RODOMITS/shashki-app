@@ -61,8 +61,11 @@ h1 span { color:var(--accent); }
 .score-grid dd { margin:0; font-size:21px; color:var(--text); font-weight:750; font-variant-numeric:tabular-nums; max-width:100%; overflow-wrap:anywhere; }
 .game { min-height:max(360px,calc(var(--page-height) - 61px)); display:grid; place-items:center; padding:12px 0 max(14px,env(safe-area-inset-bottom),var(--tg-content-safe-area-inset-bottom,0px)); }
 .play-area { width:min(100%,max(215px,calc(var(--page-height) - 230px))); }
+.game.with-ai .play-area { width:min(100%,max(215px,calc(var(--page-height) - 294px))); }
 .player { display:flex; align-items:center; gap:8px; min-height:47px; }
 .player .avatar { width:32px; height:32px; flex:none; font-size:13px; background:var(--raised); }
+.ai-comment { position:relative; width:fit-content; max-width:100%; margin:2px 0 10px; padding:7px 10px; background:var(--panel); border:1px solid var(--stroke); border-radius:8px; color:var(--text); font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+.ai-comment::before { content:""; position:absolute; left:11px; top:-5px; width:8px; height:8px; transform:rotate(45deg); border-top:1px solid var(--stroke); border-left:1px solid var(--stroke); background:var(--panel); }
 .player-name { min-width:0; }
 .player-name strong, .player-name small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .player-name strong { font-size:14px; }

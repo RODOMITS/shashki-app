@@ -46,7 +46,7 @@
         </button>
         <button id="bot" class="mode practice" type="button" disabled>
           <span class="mode-icon"><svg aria-hidden="true"><use href="#bot-icon"/></svg></span>
-          <span class="mode-copy"><strong>Играть с ботом</strong><small>Три уровня сложности</small></span>
+          <span class="mode-copy"><strong>Играть с ботом</strong><small id="bot-levels-label">Три уровня сложности</small></span>
           <svg class="mode-arrow" aria-hidden="true"><use href="#arrow-icon"/></svg>
         </button>
         <div id="search" class="search" hidden>
@@ -76,6 +76,7 @@
           <div class="player-name"><strong id="opponent-name">Соперник</strong><small id="opponent-side"></small></div>
           <span id="opponent-count" class="counter"></span>
         </div>
+        <p id="ai-comment" class="ai-comment" role="status" aria-live="polite" hidden></p>
         <div class="surface"><div class="board" id="board" role="group" aria-label="Доска русских шашек"></div></div>
         <div class="player">
           <div class="avatar" id="own-avatar" aria-hidden="true">В</div>
@@ -96,7 +97,12 @@
     <form id="bot-form">
       <h2 id="bot-heading">Игра с ботом</h2>
       <label for="level">Сложность</label>
-      <select id="level"><option value="0">Лёгкий</option><option selected value="1">Средний</option><option value="2">Сильный</option></select>
+      <select id="level">
+        <option value="0">Лёгкий</option>
+        <option selected value="1">Средний</option>
+        <option value="2">Сильный</option>
+        <option id="ai-level" value="3" disabled>ИИ (недоступен)</option>
+      </select>
       <label for="side">Цвет шашек</label>
       <select id="side"><option value="1">Белые</option><option value="-1">Чёрные</option><option value="0">Случайный</option></select>
       <div class="dialog-actions"><button class="plain" id="close-bot" type="button">Отмена</button><button class="solid" type="submit">Начать партию</button></div>

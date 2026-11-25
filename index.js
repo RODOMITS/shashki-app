@@ -9,6 +9,7 @@ const {openStore} = require("./lib/store");
 const {verifier} = require("./lib/auth");
 const {available, viewPosition, complete, jump} = require("./lib/game");
 const {legalMoves} = require("./lib/engine");
+const {AI_LEVEL, createAiPlayer} = require("./lib/ai-player");
 const {appUrl, runTelegram} = require("./lib/telegram");
 
 const staticContent = new Map([
@@ -45,7 +46,7 @@ async function readBody(request) {
   }
 }
 
-function createApp({token, databasePath, now = Date.now}) {
+function createApp({token, databasePath, now = Date.now, aiPlayer = null}) {
   if (!token) throw new Error("Нужен BOT_TOKEN.");
   const assets = new Map([...staticContent].map(([url,[file,type]]) => [
     url, [readFileSync(join(__dirname,"public",file)),type]
@@ -55,36 +56,70 @@ function createApp({token, databasePath, now = Date.now}) {
   const jobs = new Map();
   let worker;
 
+  function finishBotMove(id, job, move, comment = null) {
+    if (jobs.get(id) !== job) return;
+    jobs.delete(id);
+    const row = store.get(id);
+    if (!row || row.rev !== job.rev || row.game.result) return;
+    const choice = move || legalMoves(row.game.board,row.game.turn)[0];
+    if (!choice) return;
+    complete(row.game,choice);
+    if (comment) row.game.comment = comment;
+    store.save(row,now());
+  }
+
   function currentWorker() {
     if (worker) return worker;
-    worker = new Worker(join(__dirname,"lib","bot-worker.js"));
-    worker.unref();
-    worker.on("message", ({id,move}) => {
-      const rev = jobs.get(id);
-      jobs.delete(id);
-      const row = store.get(id);
-      if (!row || row.rev !== rev || row.game.result) return;
-      const choice = move || legalMoves(row.game.board,row.game.turn)[0];
-      if (!choice) return;
-      complete(row.game,choice);
-      store.save(row,now());
+    const instance = new Worker(join(__dirname,"lib","bot-worker.js"));
+    worker = instance;
+    instance.on("message", ({id,move}) => {
+      const job = jobs.get(id);
+      if (job?.worker === instance) finishBotMove(id,job,move,job.comment);
     });
-    worker.on("error", () => console.warn("Вычисление хода бота прервалось."));
-    worker.on("exit", () => {
-      jobs.clear();
-      worker = undefined;
+    instance.on("error", () => console.warn("Вычисление хода бота прервалось."));
+    instance.on("exit", () => {
+      for (const [id,job] of jobs) {
+        if (job.worker === instance) jobs.delete(id);
+      }
+      if (worker === instance) worker = undefined;
     });
-    return worker;
+    instance.unref();
+    return instance;
+  }
+
+  function queueLocalBot(row, job, level) {
+    if (jobs.get(row.id) !== job) return;
+    const {board, turn, draw} = row.game;
+    job.worker = currentWorker();
+    job.worker.postMessage({id:row.id,args:[board,turn,level,draw.repetitions]});
   }
 
   function nudgeBot(row) {
     if (!row || row.mode !== "bot" || row.game.result || jobs.has(row.id)) return;
     const botSide = row.white === 0 ? 1 : -1;
     if (row.game.turn !== botSide) return;
-    const {board, level, draw} = row.game;
-    const instance = currentWorker();
-    jobs.set(row.id,row.rev);
-    instance.postMessage({id:row.id,args:[board,botSide,level,draw.repetitions]});
+    const {board, level, last} = row.game;
+    const job = {rev:row.rev};
+    jobs.set(row.id,job);
+    if (level !== AI_LEVEL) {
+      queueLocalBot(row,job,level);
+      return;
+    }
+    function fallback() {
+      job.comment = "ИИ сейчас недоступен. Этот ход сделан обычным ботом.";
+      queueLocalBot(row,job,2);
+    }
+    if (!aiPlayer) {
+      fallback();
+      return;
+    }
+    const moves = legalMoves(board,botSide);
+    job.controller = new AbortController();
+    aiPlayer({board, side:botSide, last, moves, signal:job.controller.signal})
+      .then(decision => {
+        if (moves.includes(decision?.move)) finishBotMove(row.id,job,decision.move,decision.comment);
+        else fallback();
+      },fallback);
   }
 
   function view(row, id) {
@@ -92,19 +127,20 @@ function createApp({token, databasePath, now = Date.now}) {
     const side = row.white === id ? 1 : -1;
     const foe = side === 1 ? row.black : row.white;
     const game = row.game;
-    const opponent = foe ? store.profile(foe) : {name:"Бот",photo:null};
+    const ai = row.mode === "bot" && game.level === AI_LEVEL;
+    const opponent = foe ? store.profile(foe) : {name:ai ? "ИИ" : "Бот",photo:null};
     return {
       id:row.id, mode:row.mode, version:row.rev, side, turn:game.turn, opponent,
       ...viewPosition(game), chain:game.chain?.at(-1) ?? null, last:game.last,
       available:!game.result && game.turn === side ? available(game) : [],
-      result:game.result
+      result:game.result, ai, comment:ai ? game.comment ?? null : null
     };
   }
 
   function state(user, row) {
     row ??= store.active(user.id) ?? store.latest(user.id);
     nudgeBot(row);
-    return {profile:{name:user.name,photo:user.photo}, stats:store.stats(user.id),
+    return {profile:{name:user.name,photo:user.photo}, stats:store.stats(user.id), aiAvailable:Boolean(aiPlayer),
       queued:store.heartbeat(user.id,now()), game:view(row,user.id)};
   }
 
@@ -117,7 +153,8 @@ function createApp({token, databasePath, now = Date.now}) {
       return state(user);
     },
     "POST /api/bot":(user, body) => {
-      if (![0,1,2].includes(body.level) || ![-1,0,1].includes(body.side)) throw fail(400,"Выбери цвет и сложность.");
+      if (![0,1,2,AI_LEVEL].includes(body.level) || ![-1,0,1].includes(body.side)) throw fail(400,"Выбери цвет и сложность.");
+      if (body.level === AI_LEVEL && !aiPlayer) throw fail(503,"Режим ИИ пока недоступен.");
       const side = body.side || (randomInt(2) ? 1 : -1);
       return state(user,store.startBot(user.id,side,body.level,now()));
     },
@@ -138,6 +175,9 @@ function createApp({token, databasePath, now = Date.now}) {
       row.game.result = {side:-side,reason:"Партия завершилась сдачей."};
       row.game.chain = null;
       if (!store.save(row,now())) throw fail(409,"Партия уже завершилась.");
+      const job = jobs.get(row.id);
+      jobs.delete(row.id);
+      job?.controller?.abort();
       return state(user,store.get(row.id));
     }
   };
@@ -168,6 +208,8 @@ function createApp({token, databasePath, now = Date.now}) {
     }
   });
   server.on("close", () => {
+    for (const job of jobs.values()) job.controller?.abort();
+    jobs.clear();
     worker?.removeAllListeners("message");
     worker?.terminate();
     store.close();
@@ -181,7 +223,8 @@ if (require.main === module) {
   const port = Number(env.PORT || 3000);
   const data = env.DATA_DIR || join(__dirname,"data");
   mkdirSync(data,{recursive:true});
-  const server = createApp({token,databasePath:join(data,"shashki.sqlite")});
+  const aiPlayer = createAiPlayer(env.OPENROUTER_API_KEY);
+  const server = createApp({token,databasePath:join(data,"shashki.sqlite"),aiPlayer});
   server.listen(port,"0.0.0.0",()=>{
     console.log("Шашки.App запущены, порт " + port);
     const url = appUrl(env);

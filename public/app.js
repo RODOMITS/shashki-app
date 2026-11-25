@@ -82,11 +82,17 @@ function renderControls() {
   $("queue").hidden = Boolean(state?.queued);
   $("queue").disabled = !state || busy || Boolean(active);
   $("bot").disabled = !state || busy || Boolean(active) || Boolean(state?.queued);
+  const aiAvailable = Boolean(state?.aiAvailable);
+  const aiOption = $("ai-level");
+  aiOption.disabled = !aiAvailable;
+  aiOption.textContent = aiAvailable ? "ИИ" : "ИИ (недоступен)";
+  $("bot-levels-label").textContent = aiAvailable ? "Три уровня и режим ИИ" : "Три уровня сложности";
   $("resume").disabled = busy;
   $("cancel-search").disabled = busy;
   $("search").hidden = !state?.queued;
   $("retry").hidden = !initData || Boolean(state) || busy;
-  $("resume-label").textContent = !active ? "" : state.game.mode === "online" ? "Онлайн-партия" : "Игра с ботом";
+  $("resume-label").textContent = !active ? "" :
+    state.game.mode === "online" ? "Онлайн-партия" : state.game.ai ? "Игра с ИИ" : "Игра с ботом";
   $("menu-note").textContent = menuError;
   if (!inGame || !state?.game) return;
   const game = state.game;
@@ -131,9 +137,10 @@ function renderBoard() {
 
 function renderGame(previous) {
   const game = state.game;
+  const waiting = game.ai ? "ИИ думает…" : game.mode === "bot" ? "Бот думает…" : "Ход соперника";
   const status = game.result ? game.result.side === 0 ? "Ничья" :
     game.result.side === game.side ? "Вы победили!" : "Поражение" :
-    game.turn !== game.side ? (game.mode === "bot" ? "Бот думает…" : "Ход соперника") :
+    game.turn !== game.side ? waiting :
     game.chain !== null ? "Продолжайте взятие" :
     game.available.some(move => move.capture) ? "Взятие обязательно" : "Ваш ход";
   if ($("game-status").textContent !== status) $("game-status").textContent = status;
@@ -143,6 +150,12 @@ function renderGame(previous) {
   $("opponent-name").textContent = game.opponent?.name || "Соперник";
   avatar($("own-avatar"),state.profile);
   avatar($("opponent-avatar"),game.opponent);
+  const bubble = $("ai-comment");
+  const opening = game.turn === game.side ? "Твой ход. Посмотрим, как начнём." : "Оцениваю позицию…";
+  const comment = game.ai ? game.comment || (game.result ? "" : opening) : "";
+  $("game").classList.toggle("with-ai",game.ai);
+  bubble.hidden = !comment;
+  if (bubble.textContent !== comment) bubble.textContent = comment;
   $("own-count").textContent = game.board.filter(p => Math.sign(p) === game.side).length;
   $("opponent-count").textContent = game.board.filter(p => Math.sign(p) === -game.side).length;
   renderBoard();
